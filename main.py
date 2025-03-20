@@ -21,6 +21,7 @@ class SearchSession:
         self.messages.append({"role": "system", "content": "You have to respond only with a name in the list. The user will tell you what the session was about and you have to choose one item out of this list that most closely matches the name which is also a description. * ONLY RESPOND WITH THE EXACT NAME OF THE SESSION. Here is the list of sessions you can choose from: " + str(list_of_sessions)})
 
     
+
     def get_filename_of_existing_session(self):
         return self.filename_of_existing_session
 
@@ -48,22 +49,42 @@ class SearchSession:
 
 class ChatSession:
     def __init__(self):
+        
         self.url = "https://ai.hackclub.com/chat/completions"
         self.headers = {
             "Content-Type": "application/json"
         }
-        self.messages = [
-            {"role": "system", "content": "You are a terminal assitant that helps the user get what they want done in the terminal."}
-        ]
+        # load system message from settings.json
+        try:
+            with open ("data/settings.json", 'r') as json_file:
+                data = json.load(json_file)
+                system_message = data.get("system_messages")
+            self.messages = [
+                {"role": "system", "content": system_message}
+            ]
+        except:
+            self.messages = [
+                {"role": "system", "content": "You are a terminal assitant that helps the user get what they want done in the terminal."}
+            ]
         self.existing_session = False
         self.filename_of_existing_session = ""
 
     
+    def load_session(self, filename):
+        with open("sessions/" + filename, 'r') as json_file:
+            self.messages = json.load(json_file)
+
+        self.filename_of_existing_session = filename
+        self.existing_session = True
+
     def get_filename_of_existing_session(self):
         return self.filename_of_existing_session
 
     def add_user_message(self, content):
         self.messages.append({"role": "user", "content": content})
+
+    def add_system_message(self, content):
+        self.messages.append({"role": "system", "content": content})
 
     def get_response(self):
 
@@ -110,15 +131,17 @@ def find_session():
 
 def main():
     session = ChatSession()
-    print('Type "exit" to exit session.\n')
+
+
+    print('Type "-exit" to exit session and "-help" for more info.\n')
 
     valid_input = False
 
     while valid_input == False:
 
-        continue_last_session = input("do you wish to continue with the last session or to continue with a past session? (y/n/o): ").lower()
+        continue_last_session = input("continue with last session y/n choose an other one o : ([y]/n/o): ").lower()
 
-        if continue_last_session == 'y' or continue_last_session == 'yes':
+        if continue_last_session == 'y' or continue_last_session == 'yes' or continue_last_session == '':
 
             with open("data/data.json", 'r') as json_file:
 
@@ -132,8 +155,8 @@ def main():
                         print("Continuing with : " + last_session)
 
                     session.existing_session = True
-                    session.name_of_existing_session = last_session
-                    print(session.name_of_existing_session) # here it works
+                    session.filename_of_existing_session = last_session
+                    print(session.filename_of_existing_session) # here it works
 
                 else:
                     print("No last session found.")
@@ -145,32 +168,52 @@ def main():
         
         elif continue_last_session == 'o' or continue_last_session == 'past' or continue_last_session == 'other':
             session.existing_session = True
-            session.filename_of_existing_session = find_session()
+            session.load_session(find_session())
             print("Continuing with : " + session.filename_of_existing_session)
+            valid_input = True
 
         else:
             print("Invalid input.")
 
+    # main loop
     while True:
 
         user_input = input("\n  you: ")
 
-        if user_input.lower() == 'exit':
+        if user_input.lower() == '-exit':
             exit_sequence(session)
             break 
+        elif user_input.lower() == '-help':
+            print('\n  you can change the min number of messages to save in the settings.json file. The default is 3. \ncommands :\n-exit : exit the session\n-help : show this message\n-load "filename" : load a file into the chat (must be in this directory)')
+        elif user_input.lower().startswith('-load'):
+            try:
+                filename = user_input.split(" ")[1].removeprefix('"').removesuffix('"')
+                with open(filename, 'r') as file:
+                    file_contents = file.read()
+                session.add_system_message(f"The user loaded the following file: '{filename}' here are its contents:\n{file_contents}")
+                print(f"successfully loaded {filename}.")
+            except Exception as e:
+                print(f"Failed to load file. error : {e}")
+        else:
+            session.add_user_message(user_input)
+            response = session.get_response()
+            print(f"\n  AI: {response}")
 
-        session.add_user_message(user_input)
-        response = session.get_response()
-        print(f"\n  AI: {response}")
 
 
-
-
+def load_min_messages_to_save():
+    try:
+        with open("data/settings.json", 'r') as json_file:
+            data = json.load(json_file)
+            return int(data.get("min_messages_to_save"))
+    except:
+        print("Failed to load settings.json. Using default value of 3 min messages to save.")
+        return 3
 
 def exit_sequence(session):
     json_data = copy.deepcopy(session.messages)
 
-    session.add_user_message("The user has ended the session. Choose a name that represents the session and that the user will be able to associate with this session when he sees it. Only respond with the name you chose, put space between words, do NOT end it with .json and make sure that if the user asks a question center the answer around the main idea and make it recoginsable..")
+    session.add_system_message("The user has ended the session. Choose at most 10 keywords that represent the session and that the user will be able to associate with this session when he sees it. Only respond with the name you chose, put space between words, do NOT end it with .json and make sure that if the user asks a question center the answer around the main idea and make it recoginsable..")
  
     ai_decided_name = session.get_response() + ".json"
 
@@ -179,6 +222,8 @@ def exit_sequence(session):
     if session.existing_session == True:
 
         name = session.get_filename_of_existing_session()
+        if name == "": print("name of existing session is empty")
+
         file_path = os.path.join("sessions", name)
 
         with open(file_path, 'w') as json_file:
@@ -191,14 +236,23 @@ def exit_sequence(session):
             json.dump(json_data, json_file, indent=4)
 
     else:
-        with open(os.path.join("sessions", ai_decided_name), 'w') as json_file:
-            json.dump(json_data, json_file, indent=4)
-            print("\n   Session saved as " + ai_decided_name + "\n")
+        min_messages_to_save = load_min_messages_to_save() #default 3
         
-        json_data = {"last_session": ai_decided_name}
+        print(len(session.messages))
+        if len(session.messages) <= min_messages_to_save + 3: 
+            print(f"Session not saved. Session doesnt have more than {min_messages_to_save} messages.")
+            return
+        
+        else:
 
-        with open(os.path.join("data", "data.json"), 'w') as json_file:
-            json.dump(json_data, json_file, indent=4)
+            with open(os.path.join("sessions", ai_decided_name), 'w') as json_file:
+                json.dump(json_data, json_file, indent=4)
+                print("\n   Session saved as " + ai_decided_name + "\n")
+
+            json_data = {"last_session": ai_decided_name}
+
+            with open(os.path.join("data", "data.json"), 'w') as json_file:
+                json.dump(json_data, json_file, indent=4)
 
 
     
